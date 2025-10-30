@@ -64,24 +64,50 @@ def save_history(df):
     df_save["Дата"] = today
     df_save.to_csv(HISTORY_FILE, mode="a", index=False, header=not os.path.exists(HISTORY_FILE))
 
-def get_daily_diff(df_today):
-    if not os.path.exists(HISTORY_FILE):
-        df_today["Прирост голосов"] = 0
+def get_daily_diff(df_today: pd.DataFrame):
+    """
+    Сравнивает текущее состояние голосов с предыдущим сохранённым днём.
+    Возвращает DataFrame с разницей по голосам.
+    """
+    history_file = "history.xlsx"
+
+    # Если истории нет — создаём файл
+    if not os.path.exists(history_file):
+        df_today["Изменение голосов"] = 0
+        df_today.to_excel(history_file, index=False)
         return df_today
 
-    df_history = pd.read_csv(HISTORY_FILE)
-    yesterday = df_history["Дата"].max()
-    df_yesterday = df_history[df_history["Дата"] == yesterday]
+    # Загружаем предыдущие данные
+    df_old = pd.read_excel(history_file)
 
-    df_today_compare = df_today.copy()
-    df_today_compare["Ссылка на проект"] = df_today_compare["Ссылка на проект"].str.extract(r'(https://.*)')[0]
+    # Убеждаемся, что ссылки корректны
+    df_old["Ссылка на проект"] = df_old["Ссылка на проект"].astype(str).str.extract(r'(https?://[^\s<]+)')[0]
+    df_today["Ссылка на проект"] = df_today["Ссылка на проект"].astype(str).str.extract(r'(https?://[^\s<]+)')[0]
 
-    df_merge = pd.merge(df_today_compare, df_yesterday,
-                        left_on="Ссылка на проект", right_on="Ссылка на проект",
-                        how="left", suffixes=("_today", "_yesterday"))
+    # Объединяем по ссылке на проект
+    df_today_compare = pd.merge(
+        df_today,
+        df_old[["Ссылка на проект", "Количество голосов"]],
+        on="Ссылка на проект",
+        how="left",
+        suffixes=("", "_вчера")
+    )
 
-    df_today["Прирост голосов"] = (df_merge["Количество голосов_today"] - df_merge["Количество голосов_yesterday"].fillna(0)).astype(int)
-    return df_today
+    # Вычисляем изменение голосов
+    df_today_compare["Изменение голосов"] = (
+        df_today_compare["Количество голосов"] - df_today_compare["Количество голосов_вчера"].fillna(0)
+    )
+
+    # Сохраняем новый слепок
+    df_today_compare.to_excel(history_file, index=False)
+
+    # Сортируем по изменениям
+    df_today_compare = df_today_compare.sort_values(by="Изменение голосов", ascending=False).reset_index(drop=True)
+
+    # Добавляем дату обновления
+    df_today_compare["Дата обновления"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    return df_today_compare
 
 def display_table(df, top_n=None):
     df_display = df.copy()
@@ -121,4 +147,5 @@ if not df_today.empty:
     display_table(df_filtered)
 else:
     st.info("Нажми кнопку, чтобы загрузить список проектов 🚀")
+
 
