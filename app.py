@@ -15,45 +15,48 @@ HISTORY_FILE = "votes_history.csv"
 
 @st.cache_data(ttl=600)
 def get_projects_info():
-    response = requests.get(BASE_URL)
+    url = "https://vam.golosza.ru"
+    response = requests.get(url)
     soup = BeautifulSoup(response.text, "html.parser")
-
-    links = [
-        a["href"] for a in soup.find_all("a", href=True)
-        if a["href"].startswith(PROJECT_BASE) and PROJECT_BASE + "list" not in a["href"]
-    ]
 
     projects = []
     seen_links = set()
-    for link in links:
-        if link in seen_links:
+
+    session = requests.Session()  # 🔹 повторно используем одно соединение
+
+    for a_tag in soup.find_all("a", href=True):
+        link = a_tag["href"]
+        if not link.startswith("/vote/"):
             continue
-        seen_links.add(link)
+        full_link = f"https://vam.golosza.ru{link}"
+        if full_link in seen_links:
+            continue
 
-        project_response = requests.get(link)
-        project_soup = BeautifulSoup(project_response.text, "html.parser")
+        seen_links.add(full_link)
 
-        title_tag = project_soup.find("p", class_="title")
-        title = title_tag.text.strip() if title_tag else "Без названия"
+        try:
+            project_response = session.get(full_link, timeout=10)
+            project_soup = BeautifulSoup(project_response.text, "html.parser")
 
-        votes_tag = project_soup.find("div", class_="took-part-banner_count")
-        if votes_tag:
-            votes_numbers = re.findall(r'\d+', votes_tag.text)
-            votes = int(votes_numbers[0]) if votes_numbers else 0
-        else:
-            votes = 0
+            title_tag = project_soup.find("p", class_="title")
+            title = title_tag.get_text(strip=True) if title_tag else "Без названия"
 
-        projects.append({
-            "Название проекта": title,
-            "Ссылка на проект": link,
-            "Количество голосов": votes
-        })
+            votes_tag = project_soup.find("span", class_="voting-count")
+            votes = int(votes_tag.get_text(strip=True)) if votes_tag else 0
 
-    df = pd.DataFrame(projects)
-    df = df.sort_values(by="Количество голосов", ascending=False).reset_index(drop=True)
-    df.index += 1
-    df.index.name = "№"
-    return df
+            projects.append({
+                "Название": title,
+                "Ссылка": full_link,
+                "Голоса": votes
+            })
+
+            time.sleep(0.2)  # 🔹 замедляем, чтобы не перегружать сайт
+
+        except Exception as e:
+            print(f"Ошибка при обработке {full_link}: {e}")
+
+    session.close()  # 🔹 закрываем сессию
+    return projects
 
 def save_history(df):
     today = date.today().isoformat()
@@ -118,3 +121,4 @@ if not df_today.empty:
     display_table(df_filtered)
 else:
     st.info("Нажми кнопку, чтобы загрузить список проектов 🚀")
+
